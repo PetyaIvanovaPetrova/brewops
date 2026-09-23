@@ -46,6 +46,16 @@ def test_machines_list_and_health(db):
     health = r.json()
     assert health["brew_count"] == 2
     assert health["last_maintenance"]["type"] == "descale"
+    assert health["top_drink"]["name"] == "espresso"
+    assert health["top_drink"]["count"] == 2
+
+
+def test_machines_health_no_brews(db):
+    r = request(app, "GET", "/api/machines/3")
+    assert r.status == 200
+    health = r.json()
+    assert health["brew_count"] == 0
+    assert health["top_drink"] is None
 
 
 def test_machine_health_404(db):

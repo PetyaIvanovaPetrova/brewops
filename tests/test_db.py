@@ -63,10 +63,30 @@ def test_machine_health(conn):
     assert health["last_brew"] == "2026-06-01 08:00:00"
     assert health["last_maintenance"]["type"] == "descale"
     assert health["recent_errors"][0]["error_code"] == "E42"
+    assert health["top_drink"]["name"] == "espresso"
+    assert health["top_drink"]["count"] == 1
 
 
 def test_machine_health_unknown_machine(conn):
     assert get_machine_health(conn, 999) is None
+
+
+def test_machine_health_top_drink_with_multiple_types(conn):
+    insert_brew(conn, 1, "espresso", "2026-06-01 08:00:00", 27.0, 92.0, "csv")
+    insert_brew(conn, 1, "espresso", "2026-06-01 09:00:00", 26.0, 91.5, "csv")
+    insert_brew(conn, 1, "latte", "2026-06-01 10:00:00", 44.0, 88.0, "csv")
+    conn.commit()
+
+    health = get_machine_health(conn, 1)
+    assert health["top_drink"]["name"] == "espresso"
+    assert health["top_drink"]["count"] == 2
+
+
+def test_machine_health_no_brews(conn):
+    health = get_machine_health(conn, 2)
+    assert health["brew_count"] == 0
+    assert health["last_brew"] is None
+    assert health["top_drink"] is None
 
 
 def test_reset_db_clears_events(conn):
