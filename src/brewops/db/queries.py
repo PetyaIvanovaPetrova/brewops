@@ -65,46 +65,78 @@ def insert_maintenance(
     return cur.lastrowid
 
 
-def get_stats(conn: sqlite3.Connection) -> dict[str, Any]:
+def _date_filter_clause(start: str | None, end: str | None, column: str = "timestamp") -> tuple[str, list[str]]:
+    """Build a `WHERE` fragment (starting with '' or ' AND ...') and its params
+    for filtering a timestamp column to an inclusive [start, end] date range."""
+    clauses = []
+    params: list[str] = []
+    if start is not None:
+        clauses.append(f"{column} >= ?")
+        params.append(f"{start} 00:00:00")
+    if end is not None:
+        clauses.append(f"DATE({column}) <= ?")
+        params.append(end)
+    if not clauses:
+        return "", []
+    return " AND " + " AND ".join(clauses), params
+
+
+def get_stats(
+    conn: sqlite3.Connection,
+    start: str | None = None,
+    end: str | None = None,
+) -> dict[str, Any]:
     """Dashboard numbers: totals, per-drink, per-day."""
-    total = conn.execute("SELECT COUNT(*) AS n FROM brew_events").fetchone()["n"]
+    clause, params = _date_filter_clause(start, end)
+    total = conn.execute(f"SELECT COUNT(*) AS n FROM brew_events WHERE 1=1{clause}", params).fetchone()["n"]
+    per_drink_clause, per_drink_params = _date_filter_clause(start, end, column="be.timestamp")
     per_drink = [
         dict(r)
         for r in conn.execute(
-            """
+            f"""
             SELECT dt.name, dt.label, COUNT(be.id) AS count
             FROM drink_types dt
-            LEFT JOIN brew_events be ON be.drink_type = dt.name
+            LEFT JOIN brew_events be ON be.drink_type = dt.name{per_drink_clause}
             GROUP BY dt.id
             ORDER BY dt.id
-            """
+            """,
+            per_drink_params
         )
     ]
+    per_day_clause, per_day_params = _date_filter_clause(start, end)
     per_day = [
         dict(r)
         for r in conn.execute(
-            """
+            f"""
             SELECT DATE(timestamp) AS day, COUNT(*) AS count
             FROM brew_events
+            WHERE 1=1{per_day_clause}
             GROUP BY DATE(timestamp)
             ORDER BY day
-            """
+            """,
+            per_day_params
         )
     ]
     return {"total_brews": total, "per_drink": per_drink, "per_day": per_day}
 
 
-def get_machine_health(conn: sqlite3.Connection, machine_id: int) -> dict[str, Any] | None:
+def get_machine_health(
+    conn: sqlite3.Connection,
+    machine_id: int,
+    start: str | None = None,
+    end: str | None = None,
+) -> dict[str, Any] | None:
     """Machine card: brew activity plus maintenance history."""
     machine = get_machine(conn, machine_id)
     if machine is None:
         return None
+    clause, params = _date_filter_clause(start, end)
     brews = conn.execute(
-        """
+        f"""
         SELECT COUNT(*) AS count, MAX(timestamp) AS last_brew
-        FROM brew_events WHERE machine_id = ?
+        FROM brew_events WHERE machine_id = ?{clause}
         """,
-        (machine_id,),
+        (machine_id,) + tuple(params),
     ).fetchone()
     last_maintenance = conn.execute(
         """
@@ -127,17 +159,18 @@ def get_machine_health(conn: sqlite3.Connection, machine_id: int) -> dict[str, A
             (machine_id,),
         )
     ]
+    top_drink_clause, top_drink_params = _date_filter_clause(start, end)
     top_drink = conn.execute(
-        """
+        f"""
         SELECT dt.name, dt.label, COUNT(*) AS count
         FROM brew_events be
         JOIN drink_types dt ON dt.name = be.drink_type
-        WHERE be.machine_id = ?
+        WHERE be.machine_id = ?{top_drink_clause}
         GROUP BY dt.id
         ORDER BY count DESC, dt.id ASC
         LIMIT 1
         """,
-        (machine_id,),
+        (machine_id,) + tuple(top_drink_params),
     ).fetchone()
     return machine | {
         "brew_count": brews["count"],
